@@ -457,6 +457,7 @@ static void infrared_cli_list_remote_signals(FuriString* remote_name) {
 
 static void
     infrared_cli_brute_force_signals(Cli* cli, FuriString* remote_name, FuriString* signal_name) {
+    uint32_t start_time = furi_get_tick();
     InfraredBruteForce* brute_force = infrared_brute_force_alloc();
     FuriString* remote_path = furi_string_alloc_printf(
         "%s/%s.ir", INFRARED_ASSETS_FOLDER, furi_string_get_cstr(remote_name));
@@ -488,14 +489,28 @@ static void
         printf("Press Ctrl-C to stop.\r\n");
 
         int records_sent = 0;
+        uint32_t total_send_time = 0;
+        
         while(running) {
+            uint32_t signal_start = furi_get_tick();
             running = infrared_brute_force_send_next(brute_force);
+            uint32_t signal_time = furi_get_tick() - signal_start;
+            total_send_time += signal_time;
 
             if(cli_cmd_interrupt_received(cli)) break;
 
-            printf("\r%d%% complete.", (int)((float)records_sent++ / (float)record_count * 100));
+            printf("\r%d%% complete. Last signal: %lums, Avg: %lums", 
+                   (int)((float)records_sent / (float)record_count * 100),
+                   signal_time,
+                   records_sent > 0 ? total_send_time / records_sent : 0);
             fflush(stdout);
+            records_sent++;
         }
+
+        uint32_t total_time = furi_get_tick() - start_time;
+        printf("\nCompleted in %lums. Average per signal: %lums\n",
+               total_time,
+               records_sent > 0 ? total_send_time / records_sent : 0);
 
         infrared_brute_force_stop(brute_force);
     } while(false);
