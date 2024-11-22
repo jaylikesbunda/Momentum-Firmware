@@ -5,16 +5,12 @@
 #include <flipper_format/flipper_format.h>
 
 #include "infrared_signal.h"
-#include <furi/core/timer.h>
-#include <furi/core/log.h>
 
 #define TAG "InfraredBruteforce"
 
 #define INFRARED_FILE_HEADER     "IR signals file"
 #define INFRARED_LIBRARY_HEADER  "IR library file"
 #define INFRARED_LIBRARY_VERSION (1)
-
-#define INFRARED_BUFFER_SIZE 64
 
 typedef struct {
     uint32_t index;
@@ -35,20 +31,7 @@ struct InfraredBruteForce {
     InfraredSignal* current_signal;
     InfraredBruteForceRecordDict_t records;
     bool is_started;
-    uint32_t start_time;
-    uint32_t signals_sent;
-    
-    // Add new buffer members
-    InfraredSignal** signal_buffer;  // Array of pre-loaded signals
-    size_t buffer_size;              // Size of the buffer
-    size_t buffer_position;          // Current position in buffer
-    size_t total_signals_loaded;     // Total number of signals loaded in buffer
 };
-
-// Forward declarations
-static bool infrared_brute_force_load_buffer(InfraredBruteForce* brute_force);
-static void infrared_brute_force_init_buffer(InfraredBruteForce* brute_force);
-static void infrared_brute_force_free_buffer(InfraredBruteForce* brute_force);
 
 InfraredBruteForce* infrared_brute_force_alloc(void) {
     InfraredBruteForce* brute_force = malloc(sizeof(InfraredBruteForce));
@@ -58,10 +41,6 @@ InfraredBruteForce* infrared_brute_force_alloc(void) {
     brute_force->is_started = false;
     brute_force->current_record_name = furi_string_alloc();
     InfraredBruteForceRecordDict_init(brute_force->records);
-    
-    // Initialize buffer
-    infrared_brute_force_init_buffer(brute_force);
-    
     return brute_force;
 }
 
@@ -69,10 +48,6 @@ void infrared_brute_force_free(InfraredBruteForce* brute_force) {
     furi_assert(!brute_force->is_started);
     InfraredBruteForceRecordDict_clear(brute_force->records);
     furi_string_free(brute_force->current_record_name);
-    
-    // Free buffer
-    infrared_brute_force_free_buffer(brute_force);
-    
     free(brute_force);
 }
 
@@ -84,9 +59,6 @@ void infrared_brute_force_set_db_filename(InfraredBruteForce* brute_force, const
 InfraredErrorCode infrared_brute_force_calculate_messages(
     InfraredBruteForce* brute_force,
     bool auto_detect_buttons) {
-    uint32_t start_time = furi_get_tick();
-    FURI_LOG_I(TAG, "Starting bruteforce calculation");
-    
     furi_assert(!brute_force->is_started);
     furi_assert(brute_force->db_filename);
     InfraredErrorCode error = InfraredErrorCodeNone;
@@ -98,7 +70,6 @@ InfraredErrorCode infrared_brute_force_calculate_messages(
 
     do {
         if(!flipper_format_buffered_file_open_existing(ff, brute_force->db_filename)) {
-            FURI_LOG_E(TAG, "Failed to open file after %lums", (furi_get_tick() - start_time));
             error = InfraredErrorCodeFileOperationFailed;
             break;
         }
@@ -130,11 +101,7 @@ InfraredErrorCode infrared_brute_force_calculate_messages(
 
         bool signals_valid = false;
         uint32_t auto_detect_button_index = 0;
-        uint32_t signal_count = 0;
-        uint32_t process_start_time = furi_get_tick();
-        
         while(infrared_signal_read_name(ff, signal_name) == InfraredErrorCodeNone) {
-            signal_count++;
             error = infrared_signal_read_body(signal, ff);
             signals_valid = (!INFRARED_ERROR_PRESENT(error)) && infrared_signal_is_valid(signal);
             if(!signals_valid) break;
@@ -151,16 +118,6 @@ InfraredErrorCode infrared_brute_force_calculate_messages(
             }
         }
         if(!signals_valid) break;
-        
-        uint32_t total_time = furi_get_tick() - start_time;
-        uint32_t process_time = furi_get_tick() - process_start_time;
-        
-        FURI_LOG_I(
-            TAG,
-            "Processed %lu signals in %lums (total time: %lums)",
-            signal_count,
-            process_time,
-            total_time);
     } while(false);
 
     infrared_signal_free(signal);
@@ -178,11 +135,6 @@ bool infrared_brute_force_start(
     furi_assert(!brute_force->is_started);
     bool success = false;
     *record_count = 0;
-
-    brute_force->start_time = furi_get_tick();
-    brute_force->signals_sent = 0;
-    brute_force->buffer_position = 0;
-    brute_force->total_signals_loaded = 0;
 
     InfraredBruteForceRecordDict_it_t it;
     for(InfraredBruteForceRecordDict_it(it, brute_force->records);
@@ -205,12 +157,6 @@ bool infrared_brute_force_start(
         brute_force->is_started = true;
         success =
             flipper_format_buffered_file_open_existing(brute_force->ff, brute_force->db_filename);
-            
-        if(success) {
-            // Pre-load first batch of signals
-            success = infrared_brute_force_load_buffer(brute_force);
-        }
-        
         if(!success) infrared_brute_force_stop(brute_force);
     }
     return success;
@@ -222,15 +168,6 @@ bool infrared_brute_force_is_started(const InfraredBruteForce* brute_force) {
 
 void infrared_brute_force_stop(InfraredBruteForce* brute_force) {
     furi_assert(brute_force->is_started);
-    
-    uint32_t total_time = furi_get_tick() - brute_force->start_time;
-    FURI_LOG_I(
-        TAG,
-        "Brute force complete: sent %lu signals in %lu ms (avg: %lu ms/signal)",
-        brute_force->signals_sent,
-        total_time,
-        brute_force->signals_sent > 0 ? total_time / brute_force->signals_sent : 0);
-
     furi_string_reset(brute_force->current_record_name);
     infrared_signal_free(brute_force->current_signal);
     flipper_format_free(brute_force->ff);
@@ -242,45 +179,15 @@ void infrared_brute_force_stop(InfraredBruteForce* brute_force) {
 
 bool infrared_brute_force_send_next(InfraredBruteForce* brute_force) {
     furi_assert(brute_force->is_started);
-    
-    // Check if buffer needs refill
-    if(brute_force->buffer_position >= brute_force->total_signals_loaded) {
-        if(!infrared_brute_force_load_buffer(brute_force)) {
-            return false;
-        }
-    }
-    
-    // Get signal from buffer
-    InfraredSignal* signal = brute_force->signal_buffer[brute_force->buffer_position++];
-    if(signal && infrared_signal_is_valid(signal)) {
-        infrared_signal_transmit(signal);
-        brute_force->signals_sent++;
-        return true;
-    }
-    
-    return false;
-}
 
-bool infrared_brute_force_send_batch(InfraredBruteForce* brute_force, size_t batch_size) {
-    furi_assert(brute_force->is_started);
-    bool success = true;
-    
-    for(size_t i = 0; i < batch_size && success; i++) {
-        if(brute_force->buffer_position >= brute_force->total_signals_loaded) {
-            if(!infrared_brute_force_load_buffer(brute_force)) {
-                break;
-            }
-        }
-        
-        InfraredSignal* signal = brute_force->signal_buffer[brute_force->buffer_position++];
-        if(signal && infrared_signal_is_valid(signal)) {
-            infrared_signal_transmit(signal);
-            brute_force->signals_sent++;
-        } else {
-            success = false;
-        }
+    const bool success = infrared_signal_search_by_name_and_read(
+                             brute_force->current_signal,
+                             brute_force->ff,
+                             furi_string_get_cstr(brute_force->current_record_name)) ==
+                         InfraredErrorCodeNone;
+    if(success) {
+        infrared_signal_transmit(brute_force->current_signal);
     }
-    
     return success;
 }
 
@@ -326,52 +233,4 @@ const char*
     }
 
     return NULL; //just as fallback
-}
-
-static bool infrared_brute_force_load_buffer(InfraredBruteForce* brute_force) {
-    furi_assert(brute_force);
-    bool success = true;
-    size_t loaded = 0;
-
-    // Clear existing buffer if needed
-    if(brute_force->buffer_position >= brute_force->buffer_size) {
-        brute_force->buffer_position = 0;
-    }
-
-    // Load signals into buffer
-    while(loaded < INFRARED_BUFFER_SIZE && success) {
-        if(!brute_force->signal_buffer[loaded]) {
-            brute_force->signal_buffer[loaded] = infrared_signal_alloc();
-        }
-        
-        success = infrared_signal_search_by_name_and_read(
-            brute_force->signal_buffer[loaded],
-            brute_force->ff,
-            furi_string_get_cstr(brute_force->current_record_name)) == InfraredErrorCodeNone;
-            
-        if(success) loaded++;
-    }
-
-    brute_force->total_signals_loaded = loaded;
-    return loaded > 0;
-}
-
-static void infrared_brute_force_init_buffer(InfraredBruteForce* brute_force) {
-    brute_force->buffer_size = INFRARED_BUFFER_SIZE;
-    brute_force->signal_buffer = malloc(sizeof(InfraredSignal*) * brute_force->buffer_size);
-    memset(brute_force->signal_buffer, 0, sizeof(InfraredSignal*) * brute_force->buffer_size);
-    brute_force->buffer_position = 0;
-    brute_force->total_signals_loaded = 0;
-}
-
-static void infrared_brute_force_free_buffer(InfraredBruteForce* brute_force) {
-    if(brute_force->signal_buffer) {
-        for(size_t i = 0; i < brute_force->buffer_size; i++) {
-            if(brute_force->signal_buffer[i]) {
-                infrared_signal_free(brute_force->signal_buffer[i]);
-            }
-        }
-        free(brute_force->signal_buffer);
-        brute_force->signal_buffer = NULL;
-    }
 }

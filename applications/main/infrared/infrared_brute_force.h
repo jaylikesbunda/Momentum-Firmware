@@ -133,5 +133,3 @@ size_t infrared_brute_force_get_button_count(const InfraredBruteForce* brute_for
  */
 const char*
     infrared_brute_force_get_button_name(const InfraredBruteForce* brute_force, size_t index);
-
-bool infrared_brute_force_send_batch(InfraredBruteForce* brute_force, size_t batch_size);
