@@ -17,6 +17,13 @@ extern "C" {
 #define MF_DESFIRE_CMD_GET_FILE_IDS        (0x6F)
 #define MF_DESFIRE_CMD_GET_FILE_SETTINGS   (0xF5)
 
+#define MF_DESFIRE_CMD_CREATE_APPLICATION        (0xCA)
+#define MF_DESFIRE_CMD_CREATE_STD_DATA_FILE      (0xCD)
+#define MF_DESFIRE_CMD_CREATE_BACKUP_DATA_FILE   (0xCB)
+#define MF_DESFIRE_CMD_CREATE_VALUE_FILE         (0xCC)
+#define MF_DESFIRE_CMD_CREATE_LINEAR_RECORD_FILE (0xC1)
+#define MF_DESFIRE_CMD_CREATE_CYCLIC_RECORD_FILE (0xC0)
+
 #define MF_DESFIRE_CMD_READ_DATA    (0xBD)
 #define MF_DESFIRE_CMD_GET_VALUE    (0x6C)
 #define MF_DESFIRE_CMD_READ_RECORDS (0xBB)
@@ -97,6 +104,7 @@ typedef enum {
     MfDesfireFileTypeValue = 2,
     MfDesfireFileTypeLinearRecord = 3,
     MfDesfireFileTypeCyclicRecord = 4,
+    MfDesfireFileTypeTransactionMac = 5,
 } MfDesfireFileType;
 
 typedef enum {
@@ -128,6 +136,11 @@ typedef struct {
             uint32_t max;
             uint32_t cur;
         } record;
+        struct {
+            uint8_t key_option;
+            uint8_t key_version;
+            uint32_t counter_limit;
+        } transaction_mac;
     };
 } MfDesfireFileSettings;
 
